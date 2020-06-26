@@ -64,6 +64,9 @@ extern "C" {
 
 #define OPCODE_ST 6             /*!< Instruction: store indirect to RTC memory */
 #define SUB_OPCODE_ST 4         /*!< Store 32 bits, 16 MSBs contain PC, 16 LSBs contain value from source register */
+#define ST_WR_FULL 0           /*!< ST writes full word, including the pointer: {PC[10:0], 5’b0, Rsrc[15:0]} */
+#define ST_WR_HALF_LBL 1       /*!< ST writes half word, 2 bits are user-defined:  {Label[1:0],Rscr[13:0]} */
+#define ST_WR_HALF 3           /*!< ST writes half word: Rscr[15:0] */
 
 #define OPCODE_ALU 7            /*!< Arithmetic instructions */
 #define SUB_OPCODE_ALU_REG 0    /*!< Arithmetic instruction, both source values are in register */
@@ -76,18 +79,27 @@ extern "C" {
 #define ALU_SEL_MOV 4           /*!< Copy value (immediate to destination register or source register to destination register */
 #define ALU_SEL_LSH 5           /*!< Shift left by given number of bits */
 #define ALU_SEL_RSH 6           /*!< Shift right by given number of bits */
+#define ALU_SEL_SINC  0         /*!< Increment the stage counter */
+#define ALU_SEL_SDEC  1         /*!< Decrement the stage counter */
+#define ALU_SEL_SRST  2         /*!< Reset the stage counter */
 
 #define OPCODE_BRANCH 8         /*!< Branch instructions */
-#define SUB_OPCODE_BX  0        /*!< Branch to absolute PC (immediate or in register) */
+#define SUB_OPCODE_BR  0        /*!< Branch to relative PC, conditional on R0 */
+#define SUB_OPCODE_BX  1        /*!< Branch to absolute PC (immediate or in register) */
+#define SUB_OPCODE_BS  2        /*!< Branch to relative PC, conditional on the stage counter */
 #define BX_JUMP_TYPE_DIRECT 0   /*!< Unconditional jump */
 #define BX_JUMP_TYPE_ZERO 1     /*!< Branch if last ALU result is zero */
 #define BX_JUMP_TYPE_OVF 2      /*!< Branch if last ALU operation caused and overflow */
-#define SUB_OPCODE_B  1         /*!< Branch to a relative offset */
-#define B_CMP_L 0               /*!< Branch if R0 is less than an immediate */
-#define B_CMP_GE 1              /*!< Branch if R0 is greater than or equal to an immediate */
+#define BR_CMP_LT 0             /*!< Branch if R0 is less than an immediate */
+#define BR_CMP_GT 1             /*!< Branch if R0 is less than an immediate */
+#define BR_CMP_EQ 2             /*!< Branch if R0 is greater than or equal to an immediate */
+#define BS_CMP_LT 0             /*!< Branch if the stage counter < */
+#define BS_CMP_GE 1             /*!< Branch if the stage counter >= */
+#define BS_CMP_LE 2             /*!< Branch if the stage counter <= */
 
 #define OPCODE_END 9            /*!< Stop executing the program */
 #define SUB_OPCODE_END 0        /*!< Stop executing the program and optionally wake up the chip */
+#define SUB_OPCODE_WAKEUP 0     /*!< Wake up the chip */
 #define SUB_OPCODE_SLEEP 1      /*!< Stop executing the program and run it again after selected interval */
 
 #define OPCODE_TSENS 10         /*!< Instruction: temperature sensor measurement (not implemented yet) */
@@ -126,10 +138,15 @@ union ulp_insn {
     struct {
         uint32_t dreg : 2;          /*!< Register which contains data to store */
         uint32_t sreg : 2;          /*!< Register which contains address in RTC memory (expressed in words) */
-        uint32_t unused1 : 6;       /*!< Unused */
+        uint32_t label : 2;          /*!< user defined value*/
+        uint32_t upper : 1;          /*!< 0: write low half-word, 1: write high half-word */
+        uint32_t wr_way : 2;       /*!< 0: write full word, 1: with the label, 3: without the label */
+        uint32_t unused1 : 1;       /*!< Unused */
         uint32_t offset : 11;       /*!< Offset to add to sreg */
         uint32_t unused2 : 4;       /*!< Unused */
-        uint32_t sub_opcode : 3;    /*!< Sub opcode (SUB_OPCODE_ST) */
+        uint32_t wr_auto : 1;       /*!< Enable automatic storage mode */
+        uint32_t offset_set : 1;       /*!< Enable offset */
+        uint32_t manual_en : 1;    /*!< Enable manual storage mode */
         uint32_t opcode : 4;        /*!< Opcode (OPCODE_ST) */
     } st;                           /*!< Format of ST instruction */
 
@@ -138,7 +155,8 @@ union ulp_insn {
         uint32_t sreg : 2;          /*!< Register which contains address in RTC memory (expressed in words) */
         uint32_t unused1 : 6;       /*!< Unused */
         uint32_t offset : 11;       /*!< Offset to add to sreg */
-        uint32_t unused2 : 7;       /*!< Unused */
+        uint32_t unused2 : 6;       /*!< Unused */
+        uint32_t rd_upper : 1;      /*!< 0: read the high half-word, 1: read the low half-word */
         uint32_t opcode : 4;        /*!< Opcode (OPCODE_LD) */
     } ld;                           /*!< Format of LD instruction */
 
@@ -150,29 +168,50 @@ union ulp_insn {
     struct {
         uint32_t dreg : 2;          /*!< Register which contains target PC, expressed in words (used if .reg == 1) */
         uint32_t addr : 11;         /*!< Target PC, expressed in words (used if .reg == 0) */
-        uint32_t unused : 8;        /*!< Unused */
+        uint32_t unused1 : 8;        /*!< Unused */
         uint32_t reg : 1;           /*!< Target PC in register (1) or immediate (0) */
         uint32_t type : 3;          /*!< Jump condition (BX_JUMP_TYPE_xxx) */
-        uint32_t sub_opcode : 3;    /*!< Sub opcode (SUB_OPCODE_BX) */
+        uint32_t unused2 : 1;       /*!< Unused */
+        uint32_t sub_opcode : 2;    /*!< Sub opcode (SUB_OPCODE_BX) */
         uint32_t opcode : 4;        /*!< Opcode (OPCODE_BRANCH) */
     } bx;                           /*!< Format of BRANCH instruction (absolute address) */
 
     struct {
         uint32_t imm : 16;          /*!< Immediate value to compare against */
-        uint32_t cmp : 1;           /*!< Comparison to perform: B_CMP_L or B_CMP_GE */
+        uint32_t cmp : 2;           /*!< Comparison to perform: BR_CMP_LT, BR_CMP_GT or BR_CMP_EQ */
         uint32_t offset : 7;        /*!< Absolute value of target PC offset w.r.t. current PC, expressed in words */
         uint32_t sign : 1;          /*!< Sign of target PC offset: 0: positive, 1: negative */
-        uint32_t sub_opcode : 3;    /*!< Sub opcode (SUB_OPCODE_B) */
+        uint32_t sub_opcode : 2;    /*!< Sub opcode (SUB_OPCODE_B) */
         uint32_t opcode : 4;        /*!< Opcode (OPCODE_BRANCH) */
     } b;                            /*!< Format of BRANCH instruction (relative address) */
+
+    struct {
+        uint32_t imm : 16;           /*!< Immediate value to compare against */
+        uint32_t cmp : 2;           /*!< Comparison to perform: JUMPS_LT, JUMPS_GE or JUMPS_LE */
+        uint32_t offset : 7;        /*!< Absolute value of target PC offset w.r.t. current PC, expressed in words */
+        uint32_t sign : 1;          /*!< Sign of target PC offset: 0: positive, 1: negative */
+        uint32_t sub_opcode : 2;    /*!< Sub opcode (SUB_OPCODE_BS) */
+        uint32_t opcode : 4;        /*!< Opcode (OPCODE_BRANCH) */
+    } bs;                           /*!< Format of BRANCH instruction (relative address, conditional on the stage counter) */
+
+    struct {
+        uint32_t unused1 : 4;       /*!< Unused */
+        uint32_t imm : 8;           /*!< Immediate value of operand */
+        uint32_t unused2 : 9;       /*!< Unused */
+        uint32_t sel : 4;           /*!< Operation to perform, one of ALU_SEL_Sxxx */
+        uint32_t unused3 : 1;       /*!< Unused */
+        uint32_t sub_opcode : 2;    /*!< Sub opcode (SUB_OPCODE_ALU_CNT) */
+        uint32_t opcode : 4;        /*!< Opcode (OPCODE_ALU) */
+    } alu_reg_s;                    /*!< Format of ALU instruction (stage counter and an immediate) */
 
     struct {
         uint32_t dreg : 2;          /*!< Destination register */
         uint32_t sreg : 2;          /*!< Register with operand A */
         uint32_t treg : 2;          /*!< Register with operand B */
-        uint32_t unused : 15;       /*!< Unused */
+        uint32_t unused1 : 15;        /*!< Unused */
         uint32_t sel : 4;           /*!< Operation to perform, one of ALU_SEL_xxx */
-        uint32_t sub_opcode : 3;    /*!< Sub opcode (SUB_OPCODE_ALU_REG) */
+        uint32_t unused2 : 1;       /*!< Unused */
+        uint32_t sub_opcode : 2;    /*!< Sub opcode (SUB_OPCODE_ALU_REG) */
         uint32_t opcode : 4;        /*!< Opcode (OPCODE_ALU) */
     } alu_reg;                      /*!< Format of ALU instruction (both sources are registers) */
 
@@ -180,9 +219,10 @@ union ulp_insn {
         uint32_t dreg : 2;          /*!< Destination register */
         uint32_t sreg : 2;          /*!< Register with operand A */
         uint32_t imm : 16;          /*!< Immediate value of operand B */
-        uint32_t unused : 1;        /*!< Unused */
+        uint32_t unused1 : 1;        /*!< Unused */
         uint32_t sel : 4;           /*!< Operation to perform, one of ALU_SEL_xxx */
-        uint32_t sub_opcode : 3;    /*!< Sub opcode (SUB_OPCODE_ALU_IMM) */
+        uint32_t unused2 : 1;        /*!< Unused */
+        uint32_t sub_opcode : 2;    /*!< Sub opcode (SUB_OPCODE_ALU_IMM) */
         uint32_t opcode : 4;        /*!< Opcode (OPCODE_ALU) */
     } alu_imm;                      /*!< Format of ALU instruction (one source is an immediate) */
 
@@ -201,16 +241,14 @@ union ulp_insn {
         uint32_t unused : 8;        /*!< Unused */
         uint32_t low : 5;           /*!< Low bit */
         uint32_t high : 5;          /*!< High bit */
-        uint32_t opcode : 4;        /*!< Opcode (OPCODE_WR_REG) */
+        uint32_t opcode : 4;        /*!< Opcode (OPCODE_RD_REG) */
     } rd_reg;                       /*!< Format of RD_REG instruction */
 
     struct {
         uint32_t dreg : 2;          /*!< Register where to store ADC result */
         uint32_t mux : 4;           /*!< Select SARADC pad (mux + 1) */
         uint32_t sar_sel : 1;       /*!< Select SARADC0 (0) or SARADC1 (1) */
-        uint32_t unused1 : 1;       /*!< Unused */
-        uint32_t cycles : 16;       /*!< TBD, cycles used for measurement */
-        uint32_t unused2 : 4;       /*!< Unused */
+        uint32_t unused2 : 21;      /*!< Unused */
         uint32_t opcode: 4;         /*!< Opcode (OPCODE_ADC) */
     } adc;                          /*!< Format of ADC instruction */
 
@@ -252,6 +290,8 @@ union ulp_insn {
         uint32_t sub_opcode : 4;    /*!< SUB_OPCODE_MACRO_LABEL or SUB_OPCODE_MACRO_BRANCH */
         uint32_t opcode: 4;         /*!< Opcode (OPCODE_MACRO) */
     } macro;                        /*!< Format of tokens used by LABEL and BRANCH macros */
+
+    uint32_t instruction;           /*!< Encoded instruction for ULP coprocessor */
 
 };
 
@@ -339,6 +379,14 @@ static inline uint32_t SOC_REG_TO_ULP_PERIPH_SEL(uint32_t reg) {
  * This instruction can access RTC_CNTL_, RTC_IO_, SENS_, and RTC_I2C peripheral registers.
  */
 #define I_WR_REG_BIT(reg, shift, val) I_WR_REG(reg, shift, shift, val)
+
+/**
+ * Read a bit in the peripheral register.
+ *
+ * Sets R0 to 1 or 0 based on bit (1 << shift) of register reg.
+ * This instruction can access RTC_CNTL_, RTC_IO_, SENS_, and RTC_I2C peripheral registers.
+ */
+#define I_RD_REG_BIT(reg, shift) I_RD_REG(reg, shift, shift)
 
 /**
  * Wake the SoC from deep sleep.
@@ -438,12 +486,89 @@ static inline uint32_t SOC_REG_TO_ULP_PERIPH_SEL(uint32_t reg) {
 #define I_ST(reg_val, reg_addr, offset_) { .st = { \
     .dreg = reg_val, \
     .sreg = reg_addr, \
+    .label = 0, \
+    .upper = 0, \
+    .wr_way = ST_WR_FULL, \
     .unused1 = 0, \
     .offset = offset_, \
     .unused2 = 0, \
-    .sub_opcode = SUB_OPCODE_ST, \
+    .wr_auto = 0, \
+    .offset_set = 0, \
+    .manual_en = 1, \
     .opcode = OPCODE_ST } }
 
+/**
+ * Set offset for subsequent use with auto I_ST instructions
+ */
+#define I_ST_OFFSET(offset_) { .st = { \
+    .dreg = 0, \
+    .sreg = 0, \
+    .label = 0, \
+    .upper = 0, \
+    .wr_way = 0, \
+    .unused1 = 0, \
+    .offset = offset_, \
+    .unused2 = 0, \
+    .wr_auto = 1, \
+    .offset_set = 1, \
+    .manual_en = 0, \
+    .opcode = OPCODE_ST } }
+
+#define I_ST16(reg_val, reg_addr, offset_, upper_) { .st = { \
+    .dreg = reg_val, \
+    .sreg = reg_addr, \
+    .label = 0, \
+    .upper = upper_, \
+    .wr_way = ST_WR_HALF, \
+    .unused1 = 0, \
+    .offset = offset_, \
+    .unused2 = 0, \
+    .wr_auto = 0, \
+    .offset_set = 0, \
+    .manual_en = 1, \
+    .opcode = OPCODE_ST } }
+
+#define I_ST_A(reg_val, reg_addr) { .st = { \
+    .dreg = reg_val, \
+    .sreg = reg_addr, \
+    .label = 0, \
+    .upper = 0, \
+    .wr_way = ST_WR_FULL, \
+    .unused1 = 0, \
+    .offset = 0, \
+    .unused2 = 0, \
+    .wr_auto = 1, \
+    .offset_set = 0, \
+    .manual_en = 0, \
+    .opcode = OPCODE_ST } }
+
+#define I_ST16_A(reg_val, reg_addr) { .st = { \
+    .dreg = reg_val, \
+    .sreg = reg_addr, \
+    .label = 0, \
+    .upper = 0, \
+    .wr_way = ST_WR_HALF, \
+    .unused1 = 0, \
+    .offset = 0, \
+    .unused2 = 0, \
+    .wr_auto = 1, \
+    .offset_set = 0, \
+    .manual_en = 0, \
+    .opcode = OPCODE_ST } }
+
+#define I_ST_L(reg_val, reg_addr, label_, auto_) { .st = { \
+    .dreg = reg_val, \
+    .sreg = reg_addr, \
+    .label = label_, \
+    .upper = 0, \
+    .wr_way = ST_WR_HALF_LBL, \
+    .unused1 = 0, \
+    .offset = 0, \
+    .unused2 = 0, \
+    .wr_auto = (auto_), ? 1 : 0, \
+    .offset_set = 0, \
+    .manual_en = (auto_), ? 0 : 1, \
+    .opcode = OPCODE_ST } }
 
 /**
  * Load value from RTC memory into reg_dest register.
@@ -457,6 +582,16 @@ static inline uint32_t SOC_REG_TO_ULP_PERIPH_SEL(uint32_t reg) {
     .unused1 = 0, \
     .offset = offset_, \
     .unused2 = 0, \
+    .rd_upper = 0, \
+    .opcode = OPCODE_LD } }
+
+#define I_LDU(reg_dest, reg_addr, offset_) { .ld = { \
+    .dreg = reg_dest, \
+    .sreg = reg_addr, \
+    .unused1 = 0, \
+    .offset = offset_, \
+    .unused2 = 0, \
+    .rd_upper = 1, \
     .opcode = OPCODE_LD } }
 
 
@@ -466,12 +601,12 @@ static inline uint32_t SOC_REG_TO_ULP_PERIPH_SEL(uint32_t reg) {
  *  pc_offset is expressed in words, and can be from -127 to 127
  *  imm_value is a 16-bit value to compare R0 against
  */
-#define I_BL(pc_offset, imm_value) { .b = { \
+#define I_BRLT(pc_offset, imm_value) { .b = { \
     .imm = imm_value, \
-    .cmp = B_CMP_L, \
+    .cmp = BR_CMP_LT, \
     .offset = abs(pc_offset), \
     .sign = (pc_offset >= 0) ? 0 : 1, \
-    .sub_opcode = SUB_OPCODE_B, \
+    .sub_opcode = SUB_OPCODE_BR, \
     .opcode = OPCODE_BRANCH } }
 
 /**
@@ -480,12 +615,26 @@ static inline uint32_t SOC_REG_TO_ULP_PERIPH_SEL(uint32_t reg) {
  *  pc_offset is expressed in words, and can be from -127 to 127
  *  imm_value is a 16-bit value to compare R0 against
  */
-#define I_BGE(pc_offset, imm_value) { .b = { \
+#define I_BRGT(pc_offset, imm_value) { .b = { \
     .imm = imm_value, \
-    .cmp = B_CMP_GE, \
+    .cmp = BR_CMP_GT, \
     .offset = abs(pc_offset), \
     .sign = (pc_offset >= 0) ? 0 : 1, \
-    .sub_opcode = SUB_OPCODE_B, \
+    .sub_opcode = SUB_OPCODE_BR, \
+    .opcode = OPCODE_BRANCH } }
+
+/**
+ *  Branch relative if R0 is equal to immediate value.
+ *
+ *  pc_offset is expressed in words, and can be from -127 to 127
+ *  imm_value is a 16-bit value to compare R0 against
+ */
+#define I_BREQ(pc_offset, imm_value) { .b = { \
+    .imm = imm_value, \
+    .cmp = BR_CMP_EQ, \
+    .offset = abs(pc_offset), \
+    .sign = (pc_offset >= 0) ? 0 : 1, \
+    .sub_opcode = SUB_OPCODE_BR, \
     .opcode = OPCODE_BRANCH } }
 
 /**
@@ -497,9 +646,10 @@ static inline uint32_t SOC_REG_TO_ULP_PERIPH_SEL(uint32_t reg) {
 #define I_BXR(reg_pc) { .bx = { \
     .dreg = reg_pc, \
     .addr = 0, \
-    .unused = 0, \
+    .unused1 = 0, \
     .reg = 1, \
     .type = BX_JUMP_TYPE_DIRECT, \
+    .unused2 = 0, \
     .sub_opcode = SUB_OPCODE_BX, \
     .opcode = OPCODE_BRANCH } }
 
@@ -511,9 +661,10 @@ static inline uint32_t SOC_REG_TO_ULP_PERIPH_SEL(uint32_t reg) {
 #define I_BXI(imm_pc) { .bx = { \
     .dreg = 0, \
     .addr = imm_pc, \
-    .unused = 0, \
+    .unused1 = 0, \
     .reg = 0, \
     .type = BX_JUMP_TYPE_DIRECT, \
+    .unused2 = 0, \
     .sub_opcode = SUB_OPCODE_BX, \
     .opcode = OPCODE_BRANCH } }
 
@@ -526,9 +677,10 @@ static inline uint32_t SOC_REG_TO_ULP_PERIPH_SEL(uint32_t reg) {
 #define I_BXZR(reg_pc) { .bx = { \
     .dreg = reg_pc, \
     .addr = 0, \
-    .unused = 0, \
+    .unused1 = 0, \
     .reg = 1, \
     .type = BX_JUMP_TYPE_ZERO, \
+    .unused2 = 0, \
     .sub_opcode = SUB_OPCODE_BX, \
     .opcode = OPCODE_BRANCH } }
 
@@ -540,9 +692,10 @@ static inline uint32_t SOC_REG_TO_ULP_PERIPH_SEL(uint32_t reg) {
 #define I_BXZI(imm_pc) { .bx = { \
     .dreg = 0, \
     .addr = imm_pc, \
-    .unused = 0, \
+    .unused1 = 0, \
     .reg = 0, \
     .type = BX_JUMP_TYPE_ZERO, \
+    .unused2 = 0, \
     .sub_opcode = SUB_OPCODE_BX, \
     .opcode = OPCODE_BRANCH } }
 
@@ -555,9 +708,10 @@ static inline uint32_t SOC_REG_TO_ULP_PERIPH_SEL(uint32_t reg) {
 #define I_BXFR(reg_pc) { .bx = { \
     .dreg = reg_pc, \
     .addr = 0, \
-    .unused = 0, \
+    .unused1 = 0, \
     .reg = 1, \
     .type = BX_JUMP_TYPE_OVF, \
+    .unused2 = 0, \
     .sub_opcode = SUB_OPCODE_BX, \
     .opcode = OPCODE_BRANCH } }
 
@@ -569,9 +723,10 @@ static inline uint32_t SOC_REG_TO_ULP_PERIPH_SEL(uint32_t reg) {
 #define I_BXFI(imm_pc) { .bx = { \
     .dreg = 0, \
     .addr = imm_pc, \
-    .unused = 0, \
+    .unused1 = 0, \
     .reg = 0, \
     .type = BX_JUMP_TYPE_OVF, \
+    .unused2 = 0, \
     .sub_opcode = SUB_OPCODE_BX, \
     .opcode = OPCODE_BRANCH } }
 
@@ -668,8 +823,9 @@ static inline uint32_t SOC_REG_TO_ULP_PERIPH_SEL(uint32_t reg) {
     .dreg = reg_dest, \
     .sreg = reg_src, \
     .imm = imm_, \
-    .unused = 0, \
+    .unused1 = 0, \
     .sel = ALU_SEL_ADD, \
+    .unused2 = 0, \
     .sub_opcode = SUB_OPCODE_ALU_IMM, \
     .opcode = OPCODE_ALU } }
 
@@ -681,8 +837,9 @@ static inline uint32_t SOC_REG_TO_ULP_PERIPH_SEL(uint32_t reg) {
     .dreg = reg_dest, \
     .sreg = reg_src, \
     .imm = imm_, \
-    .unused = 0, \
+    .unused1 = 0, \
     .sel = ALU_SEL_SUB, \
+    .unused2 = 0, \
     .sub_opcode = SUB_OPCODE_ALU_IMM, \
     .opcode = OPCODE_ALU } }
 
@@ -693,8 +850,9 @@ static inline uint32_t SOC_REG_TO_ULP_PERIPH_SEL(uint32_t reg) {
     .dreg = reg_dest, \
     .sreg = reg_src, \
     .imm = imm_, \
-    .unused = 0, \
+    .unused1 = 0, \
     .sel = ALU_SEL_AND, \
+    .unused2 = 0, \
     .sub_opcode = SUB_OPCODE_ALU_IMM, \
     .opcode = OPCODE_ALU } }
 
@@ -705,8 +863,9 @@ static inline uint32_t SOC_REG_TO_ULP_PERIPH_SEL(uint32_t reg) {
     .dreg = reg_dest, \
     .sreg = reg_src, \
     .imm = imm_, \
-    .unused = 0, \
+    .unused1 = 0, \
     .sel = ALU_SEL_OR, \
+    .unused2 = 0, \
     .sub_opcode = SUB_OPCODE_ALU_IMM, \
     .opcode = OPCODE_ALU } }
 
@@ -717,8 +876,9 @@ static inline uint32_t SOC_REG_TO_ULP_PERIPH_SEL(uint32_t reg) {
     .dreg = reg_dest, \
     .sreg = 0, \
     .imm = imm_, \
-    .unused = 0, \
+    .unused1 = 0, \
     .sel = ALU_SEL_MOV, \
+    .unused2 = 0, \
     .sub_opcode = SUB_OPCODE_ALU_IMM, \
     .opcode = OPCODE_ALU } }
 
@@ -729,8 +889,9 @@ static inline uint32_t SOC_REG_TO_ULP_PERIPH_SEL(uint32_t reg) {
     .dreg = reg_dest, \
     .sreg = reg_src, \
     .imm = imm_, \
-    .unused = 0, \
+    .unused1 = 0, \
     .sel = ALU_SEL_LSH, \
+    .unused2 = 0, \
     .sub_opcode = SUB_OPCODE_ALU_IMM, \
     .opcode = OPCODE_ALU } }
 
@@ -742,8 +903,9 @@ static inline uint32_t SOC_REG_TO_ULP_PERIPH_SEL(uint32_t reg) {
     .dreg = reg_dest, \
     .sreg = reg_src, \
     .imm = imm_, \
-    .unused = 0, \
+    .unused1 = 0, \
     .sel = ALU_SEL_RSH, \
+    .unused2 = 0, \
     .sub_opcode = SUB_OPCODE_ALU_IMM, \
     .opcode = OPCODE_ALU } }
 
@@ -829,6 +991,126 @@ static inline uint32_t SOC_REG_TO_ULP_PERIPH_SEL(uint32_t reg) {
 #define M_BXF(label_num) \
     M_BRANCH(label_num), \
     I_BXFI(0)
+
+
+/**
+ * Increment the stage counter by immediate value
+ */
+#define I_STAGE_INC(imm_) { .alu_reg_s = { \
+    .unused1 = 0, \
+    .imm = imm_, \
+    .unused2 = 0, \
+    .sel = ALU_SEL_SINC, \
+    .unused3 = 0, \
+    .sub_opcode = SUB_OPCODE_ALU_CNT, \
+    .opcode = OPCODE_ALU } }
+
+/**
+ * Decrement the stage counter by immediate value
+ */
+#define I_STAGE_DEC(imm_) { .alu_reg_s = { \
+    .unused1 = 0, \
+    .imm = imm_, \
+    .unused2 = 0, \
+    .sel = ALU_SEL_SDEC, \
+    .unused3 = 0, \
+    .sub_opcode = SUB_OPCODE_ALU_CNT, \
+    .opcode = OPCODE_ALU } }
+
+/**
+ * Reset the stage counter
+ */
+#define I_STAGE_RST() { .alu_reg_s = { \
+    .unused1 = 0, \
+    .imm = 0, \
+    .unused2 = 0, \
+    .sel = ALU_SEL_SRST, \
+    .unused3 = 0, \
+    .sub_opcode = SUB_OPCODE_ALU_CNT, \
+    .opcode = OPCODE_ALU } }
+
+/**
+ * Macro: branch to label if the stage counter is less than immediate value
+ *
+ * This macro generates two ulp_insn_t values separated by a comma, and should
+ * be used when defining contents of ulp_insn_t arrays. First value is not a
+ * real instruction; it is a token which is removed by ulp_process_macros_and_load
+ * function.
+ */
+#define M_BSLT(label_num, imm_value) \
+    M_BRANCH(label_num), \
+    I_JUMPS(0, imm_value, BS_CMP_LT)
+
+/**
+ * Macro: branch to label if the stage counter is greater than or equal to immediate value
+ *
+ * This macro generates two ulp_insn_t values separated by a comma, and should
+ * be used when defining contents of ulp_insn_t arrays. First value is not a
+ * real instruction; it is a token which is removed by ulp_process_macros_and_load
+ * function.
+ */
+#define M_BSGE(label_num, imm_value) \
+    M_BRANCH(label_num), \
+    I_JUMPS(0, imm_value, BS_CMP_GE)
+
+/**
+ * Macro: branch to label if the stage counter is less than or equal to immediate value
+ *
+ * This macro generates two ulp_insn_t values separated by a comma, and should
+ * be used when defining contents of ulp_insn_t arrays. First value is not a
+ * real instruction; it is a token which is removed by ulp_process_macros_and_load
+ * function.
+ */
+#define M_BSLE(label_num, imm_value) \
+    M_BRANCH(label_num), \
+    I_JUMPS(0, imm_value, BS_CMP_LE)
+
+/**
+ * Macro: branch to label if the stage counter is equal to immediate value.
+ *  Implemented using two JUMPS instructions:
+ *      JUMPS next, imm_value, LT
+ *      JUMPS label_num, imm_value, LE
+ *
+ * This macro generates three ulp_insn_t values separated by commas, and should
+ * be used when defining contents of ulp_insn_t arrays. Second value is not a
+ * real instruction; it is a token which is removed by ulp_process_macros_and_load
+ * function.
+ */
+#define M_BSEQ(label_num, imm_value) \
+    I_JUMPS(2, imm_value, BS_CMP_LT), \
+    M_BRANCH(label_num), \
+    I_JUMPS(0, imm_value, BS_CMP_GE)
+
+/**
+ * Macro: branch to label if the stage counter is greater than immediate value.
+ *  Implemented using two instructions:
+ *      JUMPS next, imm_value, LE
+ *      JUMPS label_num, imm_value, GE
+ *
+ * This macro generates three ulp_insn_t values separated by commas, and should
+ * be used when defining contents of ulp_insn_t arrays. Second value is not a
+ * real instruction; it is a token which is removed by ulp_process_macros_and_load
+ * function.
+ */
+#define M_BSGT(label_num, imm_value) \
+    I_JUMPS(2, imm_value, JUMPS_LE), \
+    M_BRANCH(label_num), \
+    I_JUMPS(0, imm_value, JUMPS_GE)
+
+/**
+ *  Branch relative if (stage counter [comp_type] [imm_value]) evaluates to true.
+ *
+ *  pc_offset is expressed in words, and can be from -127 to 127
+ *  imm_value is an 8-bit value to compare the stage counter against
+ *  comp_type is the type of comparison to perform: JUMPS_LT (<), JUMPS_GE (>=) or JUMPS_LE (<=)
+ */
+#define I_JUMPS(pc_offset, imm_value, comp_type) { .bs = { \
+    .imm = imm_value, \
+    .cmp = comp_type, \
+    .offset = abs(pc_offset), \
+    .sign = (pc_offset >= 0) ? 0 : 1, \
+    .sub_opcode = SUB_OPCODE_BS, \
+    .opcode = OPCODE_BRANCH } }
 
 
 

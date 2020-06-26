@@ -76,7 +76,7 @@ esp_err_t ulp_run(uint32_t entry_point)
     SET_PERI_REG_MASK(RTC_CNTL_COCPU_CTRL_REG, RTC_CNTL_COCPU_SEL);         // Select ULP_TIMER trigger target for ULP.
     CLEAR_PERI_REG_MASK(RTC_CNTL_COCPU_CTRL_REG, RTC_CNTL_COCPU_DONE_FORCE);  // Select the value for ULP_TIMER sleep. 1: REG_COCPU_DONE;0: ULP END value.
     /* Set the number of cycles of ULP_TIMER sleep, the wait time required to start ULP */
-    REG_SET_FIELD(RTC_CNTL_ULP_CP_TIMER_REG, RTC_CNTL_ULP_CP_TIMER_SLP_CYCLE, 100);
+    // REG_SET_FIELD(RTC_CNTL_ULP_CP_TIMER_1_REG, RTC_CNTL_ULP_CP_TIMER_SLP_CYCLE, 100);
     /* Clear interrupt COCPU status */
     REG_WRITE(RTC_CNTL_INT_CLR_REG, RTC_CNTL_COCPU_INT_CLR | RTC_CNTL_COCPU_TRAP_INT_CLR | RTC_CNTL_ULP_CP_INT_CLR);
     // start ULP clock gate.
@@ -151,12 +151,12 @@ esp_err_t ulp_set_wakeup_period(size_t period_index, uint32_t period_us)
     REG_SET_FIELD(SENS_ULP_CP_SLEEP_CYC0_REG + period_index * sizeof(uint32_t),
             SENS_SLEEP_CYCLES_S0, (uint32_t) period_cycles);
 #elif defined CONFIG_IDF_TARGET_ESP32S2
-    if (period_index > 4) {
+    if (period_index > 0) {
         return ESP_ERR_INVALID_ARG;
     }
     uint64_t period_us_64 = period_us;
-    uint64_t period_cycles = (period_us_64 * 1000) / 90;  //COCPU sleep clock is 90KHZ.
-    REG_SET_FIELD(RTC_CNTL_ULP_CP_TIMER_REG, RTC_CNTL_ULP_CP_TIMER_SLP_CYCLE, period_cycles);
+    uint64_t period_cycles = (period_us_64 << RTC_CLK_CAL_FRACT) / esp_clk_slowclk_cal_get();
+    REG_SET_FIELD(RTC_CNTL_ULP_CP_TIMER_1_REG, RTC_CNTL_ULP_CP_TIMER_SLP_CYCLE, period_cycles);
 #endif
     return ESP_OK;
 }
