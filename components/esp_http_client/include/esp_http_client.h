@@ -128,6 +128,7 @@ typedef struct {
     int                         buffer_size_tx;           /*!< HTTP transmit buffer size */
     void                        *user_data;               /*!< HTTP user_data context */
     bool                        is_async;                 /*!< Set asynchronous mode, only supported with HTTPS for now */
+    bool                        use_cert_bundle;          /*!< Attach certificate bundle. You can release resources when the bundle is no longer needed with esp_crt_detach(NULL). */
     bool                        use_global_ca_store;      /*!< Use a global ca_store for all the connections in which this bool is set. */
     bool                        skip_cert_common_name_check;    /*!< Skip any validation of server certificate CN field */
 } esp_http_client_config_t;

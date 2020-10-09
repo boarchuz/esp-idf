@@ -27,6 +27,10 @@
 #include "esp_transport_ssl_internal.h"
 #include "esp_transport_internal.h"
 
+#if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
+#include "esp_crt_bundle.h"
+#endif
+
 static const char *TAG = "TRANS_SSL";
 
 typedef enum {
@@ -188,6 +192,16 @@ static int ssl_destroy(esp_transport_handle_t t)
     free(ssl);
     return 0;
 }
+
+#if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
+void esp_transport_ssl_enable_certificate_bundle(esp_transport_handle_t t)
+{
+    transport_ssl_t *ssl = esp_transport_get_context_data(t);
+    if (t && ssl) {
+        ssl->cfg.crt_bundle_attach = esp_crt_bundle_attach;
+    }
+}
+#endif
 
 void esp_transport_ssl_enable_global_ca_store(esp_transport_handle_t t)
 {

@@ -60,6 +60,13 @@ void esp_transport_ssl_set_cert_data_der(esp_transport_handle_t t, const char *d
 void esp_transport_ssl_enable_global_ca_store(esp_transport_handle_t t);
 
 /**
+ * @brief      Use certificate bundle for SSL connection
+ *
+ * @param      t    ssl transport
+ */
+void esp_transport_ssl_enable_certificate_bundle(esp_transport_handle_t t);
+
+/**
  * @brief      Set SSL client certificate data for mutual authentication (as PEM format).
  *             Note that, this function stores the pointer to data, rather than making a copy.
  *             So this data must remain valid until after the connection is cleaned up
